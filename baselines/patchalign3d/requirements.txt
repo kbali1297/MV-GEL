@@ -1,0 +1,14 @@
+# Core
+torch>=2.1.0
+open_clip_torch>=2.24.0
+timm
+tqdm
+easydict
+numpy
+Pillow
+ninja 
+wandb
+transformers
+torchvision
+termcolor
+open3d==0.17.0

@@ -1,0 +1,5 @@
+# Copy to "tokens.config" (gitignored) and fill in real values, OR export these
+# as environment variables before running. No real secrets are committed.
+
+HF_token=<your_huggingface_token_here>
+OPENROUTER_API_KEY=<your_openrouter_api_key_here>

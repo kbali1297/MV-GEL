@@ -1,0 +1,13 @@
+method,feature,n,IoU,Precision,Recall,F1
+PartSLIP (Default),face,655,0.0725,0.0828,0.3678,0.1135
+PartSLIP (Default),edge,880,0.0121,0.0126,0.4216,0.0222
+PartSLIP (Top-PCD),face,655,0.0618,0.0809,0.2502,0.0970
+PartSLIP (Top-PCD),edge,880,0.0120,0.0127,0.2621,0.0215
+Find3D (Default),face,655,0.1711,0.1719,0.9549,0.2596
+Find3D (Default),edge,880,0.0169,0.0169,0.9368,0.0318
+Find3D (Top-PCD),face,655,0.1624,0.1870,0.5551,0.2431
+Find3D (Top-PCD),edge,880,0.0215,0.0229,0.3991,0.0400
+PatchAlign3D (Default),face,655,0.1594,0.1613,0.8933,0.2425
+PatchAlign3D (Default),edge,880,0.0166,0.0167,0.8949,0.0311
+PatchAlign3D (Top-PCD),face,655,0.1536,0.2025,0.3741,0.2294
+PatchAlign3D (Top-PCD),edge,880,0.0221,0.0278,0.1785,0.0399

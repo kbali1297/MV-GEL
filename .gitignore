@@ -1,0 +1,57 @@
+# ── Weights / checkpoints ──────────────────────────────
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+runs/
+best_model_view_ranker_*.pt
+
+# ── Vendored / downloaded base weights ─────────────────
+model/load_files/
+model/load_files&weights/
+model/segment_anything/*.pth
+
+# ── Data (meshes, renders, masks) ──────────────────────
+ABC_CAD_Dataset_small*/
+dataset/
+*.obj
+*.ply
+*.glb
+*.stl
+*.step
+*.stp
+
+# ── Run outputs / logs ─────────────────────────────────
+MVGEL_*/
+GeLoM_*/
+baselines/*/GeLoM_*/
+run_logs_GeoLocLM/
+run_logs_baselines/
+run_logs/
+dataset_shards/
+vis_output/
+*.log
+!configs/*.log
+
+# ── Baseline build artefacts ───────────────────────────
+baselines/*/GLIP/build/
+**/*.egg-info/
+**/build/
+
+# ── Secrets ────────────────────────────────────────────
+tokens.config
+.env
+
+# ── Python ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+env/
+
+# ── OS / editor ────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
