@@ -55,3 +55,6 @@ env/
 .DS_Store
 .vscode/
 .idea/
+
+# ── Paper PDFs ─────────────────────────────────────────
+*.pdf
