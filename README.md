@@ -126,6 +126,7 @@ See `configs/tokens.config.example`.
 
 ## Data & checkpoints
 
+To be completed,
 Not committed (regenerate or download separately):
 
 - **CAD meshes + rendered views** — `ABC_CAD_Dataset_small{2,3}/<cad>/` with
