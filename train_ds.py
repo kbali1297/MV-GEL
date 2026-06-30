@@ -12,15 +12,21 @@ import tqdm
 import transformers
 from peft import LoraConfig, get_peft_model
 from torch.utils.tensorboard import SummaryWriter
-
+import tqdm
 from model.LISA import LISAForCausalLM
 from model.llava import conversation as conversation_lib
-from utils.dataset import HybridDataset, ValDataset, collate_fn
+from utils.dataset_ import CAD_VQA_dataset, cad_collate_fn
 from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
                          AverageMeter, ProgressMeter, Summary, dict_to_cuda,
                          intersectionAndUnionGPU)
 
 import torch.distributed as dist
+
+# Repo-relative paths: ROOT is this file's dir (code); DATA_ROOT (override via
+# MVGEL_ROOT) holds the git-ignored base weights (LISA-7B / SAM) and the CAD
+# dataset logs (train_dataset.log / val_dataset.log).
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.environ.get("MVGEL_ROOT", ROOT)
 
 
 def init_distributed():
@@ -44,10 +50,11 @@ if "LOCAL_RANK" in os.environ:
     print(f"Running rank {os.environ['LOCAL_RANK']}")
 
 def parse_args(args):
+    #nohup /data/1bali/miniforge3/envs/LISA_multi_view/bin/deepspeed   --include localhost:0,1,2   train_ds_.py   --exp_name lisa   --resume runs/lisa/ckpt_model_CAD_LISA_universal   --load_universal   --epochs 60   > resume_CAD_3gpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &
     parser = argparse.ArgumentParser(description="LISA Model Training")
     parser.add_argument("--local_rank", default=0, type=int, help="node rank")
     parser.add_argument(
-        "--version", default="/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/load_files&weights/LISA-13B-llama2-v1-explanatory"
+        "--version", default=os.path.join(DATA_ROOT, "model/load_files&weights/LISA-7B-v1-explanatory")
     )
     parser.add_argument("--vis_save_path", default="./vis_output", type=str)
     parser.add_argument(
@@ -66,28 +73,13 @@ def parse_args(args):
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
     parser.add_argument("--load_in_4bit", action="store_true", default=False)
 
-    parser.add_argument(
-        "--dataset", default="sem_seg||refer_seg||vqa||reason_seg", type=str
-    )
-    parser.add_argument("--sample_rates", default="9,3,3,1", type=str)
-    parser.add_argument(
-        "--sem_seg_data",
-        default="ade20k||cocostuff||pascal_part||paco_lvis||mapillary",
-        type=str,
-    )
-    parser.add_argument(
-        "--refer_seg_data", default="refclef||refcoco||refcoco+||refcocog", type=str
-    )
-    parser.add_argument("--vqa_data", default="llava_instruct_150k", type=str)
-    parser.add_argument("--reason_seg_data", default="ReasonSeg|train", type=str)
-    parser.add_argument("--val_dataset", default="ReasonSeg|train", type=str)
     parser.add_argument("--dataset_dir", default="./dataset", type=str)
     parser.add_argument("--log_base_dir", default="./runs", type=str)
     parser.add_argument("--exp_name", default="lisa", type=str)
-    parser.add_argument("--epochs", default=10, type=int)
+    parser.add_argument("--epochs", default=20, type=int)
     parser.add_argument("--steps_per_epoch", default=500, type=int)
     parser.add_argument(
-        "--batch_size", default=10, type=int, help="batch size per device per step"
+        "--batch_size", default=96, type=int, help="batch size per device per step"
     )
     parser.add_argument(
         "--grad_accumulation_steps",
@@ -110,9 +102,24 @@ def parse_args(args):
     parser.add_argument("--exclude_val", action="store_true", default=False)
     parser.add_argument("--no_eval", action="store_true", default=False)
     parser.add_argument("--eval_only", action="store_true", default=False)
-    parser.add_argument("--vision_pretrained", default="/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth", type=str)
+    parser.add_argument("--vision_pretrained", default=os.path.join(DATA_ROOT, "model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth"), type=str)
     parser.add_argument("--out_dim", default=256, type=int)
     parser.add_argument("--resume", default="", type=str)
+    parser.add_argument("--load_universal", action="store_true", default=False)
+    parser.add_argument(
+        "--caption_variant",
+        default="corrected",
+        type=str,
+        choices=["corrected", "original"],
+        help="Which caption logs to use: 'corrected' -> *_augmented_corrected.log (viewpoint-fixed), "
+             "'original' -> *_augmented_.log (old captions).",
+    )
+    parser.add_argument(
+        "--reset_schedule",
+        action="store_true",
+        default=False,
+        help="Load only model weights from --resume (skip optimizer/LR-scheduler state) and start a fresh schedule at epoch 0.",
+    )
     parser.add_argument("--print_freq", default=1, type=int)
     parser.add_argument("--start_epoch", default=0, type=int)
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True)
@@ -129,6 +136,18 @@ def parse_args(args):
 
 
 def main(args):
+    """
+    cd /data/1bali/Other_LLM_projects/ECCV_2026/LISA
+
+nohup /data/1bali/miniforge3/envs/LISA_multi_view/bin/deepspeed \
+  --include localhost:0,1,2,3 \
+  train_ds_.py \
+  --exp_name lisa \
+  --resume runs/lisa/ckpt_model_CAD_LISA_universal \
+  --load_universal \
+  --epochs 60 \
+  > resume_CAD_4gpu_20260621_162010.log 2>&1 &
+    """
     args = parse_args(args)
     args.log_dir = os.path.join(args.log_base_dir, args.exp_name)
     if args.local_rank == 0:
@@ -255,36 +274,10 @@ def main(args):
     else:
         world_size = 1
     args.distributed = world_size > 1
-    train_dataset = HybridDataset(
-        args.dataset_dir,
-        tokenizer,
-        args.vision_tower,
-        # samples_per_epoch=args.batch_size
-        # * args.grad_accumulation_steps
-        # * args.steps_per_epoch
-        # * world_size,
-        samples_per_epoch=None,
-        precision=args.precision,
-        image_size=args.image_size,
-        num_classes_per_sample=args.num_classes_per_sample,
-        exclude_val=args.exclude_val,
-        dataset=args.dataset,
-        sample_rate=[float(x) for x in args.sample_rates.split(",")],
-        sem_seg_data=args.sem_seg_data,
-        refer_seg_data=args.refer_seg_data,
-        vqa_data=args.vqa_data,
-        reason_seg_data=args.reason_seg_data,
-        explanatory=args.explanatory,
-    )
+    train_dataset = CAD_VQA_dataset(tokenizer, args.vision_tower, 'train', caption_variant=args.caption_variant)
 
     if args.no_eval == False:
-        val_dataset = ValDataset(
-            args.dataset_dir,
-            tokenizer,
-            args.vision_tower,
-            args.val_dataset,
-            args.image_size,
-        )
+        val_dataset = CAD_VQA_dataset(tokenizer, args.vision_tower, 'val', caption_variant=args.caption_variant)
         print(
             f"Training with {len(train_dataset)} examples and validating with {len(val_dataset)} examples."
         )
@@ -339,7 +332,10 @@ def main(args):
             "allgather_bucket_size": 5e8,
         },
     }
-    
+
+    if args.load_universal:
+        ds_config["checkpoint"] = {"load_universal": True}
+
 
     # if "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1:
     #     args.distributed = True
@@ -353,24 +349,23 @@ def main(args):
 
     trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-    print("Trainable tensors passed to DeepSpeed:", len(trainable_params))
+    #print("Trainable tensors passed to DeepSpeed:", len(trainable_params))
     model_engine, optimizer, train_loader, scheduler = deepspeed.initialize(
         model=model,
         model_parameters= trainable_params,
         training_data=train_dataset,
         collate_fn=partial(
-            collate_fn,
+            cad_collate_fn,
             tokenizer=tokenizer,
-            conv_type=args.conv_type,
             use_mm_start_end=args.use_mm_start_end,
             local_rank=args.local_rank,
         ),
         config=ds_config,
     )
 
-    print("Optimizer param groups:")
-    for i, group in enumerate(optimizer.param_groups):
-        print(f"Group {i} param count:", len(group["params"]))
+    # print("Optimizer param groups:")
+    # for i, group in enumerate(optimizer.param_groups):
+    #     print(f"Group {i} param count:", len(group["params"]))
 
     steps_per_epoch = len(train_loader)
     total_steps = args.epochs * steps_per_epoch
@@ -383,19 +378,33 @@ def main(args):
             args.resume = resume
 
     if args.resume:
-        load_path, client_state = model_engine.load_checkpoint(args.resume)
-        with open(os.path.join(args.resume, "latest"), "r") as f:
-            ckpt_dir = f.readlines()[0].strip()
-        args.start_epoch = (
-            int(ckpt_dir.replace("global_step", "")) // args.steps_per_epoch
-        )
-        print(
-            "resume training from {}, start from epoch {}".format(
-                args.resume, args.start_epoch
+        if args.reset_schedule:
+            load_path, client_state = model_engine.load_checkpoint(
+                args.resume,
+                load_optimizer_states=False,
+                load_lr_scheduler_states=False,
             )
-        )
+            args.start_epoch = 0
+            print(
+                "loaded weights only from {}, fresh schedule starting at epoch 0".format(
+                    args.resume
+                )
+            )
+        else:
+            load_path, client_state = model_engine.load_checkpoint(args.resume)
+            with open(os.path.join(args.resume, "latest"), "r") as f:
+                ckpt_dir = f.readlines()[0].strip()
+            args.start_epoch = (
+                int(ckpt_dir.replace("global_step", "")) // args.steps_per_epoch
+            )
+            print(
+                "resume training from {}, start from epoch {}".format(
+                    args.resume, args.start_epoch
+                )
+            )
 
     # validation dataset
+    val_loader = None
     if val_dataset is not None:
         assert args.val_batch_size == 1
         val_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -409,9 +418,8 @@ def main(args):
             pin_memory=False,
             sampler=val_sampler,
             collate_fn=partial(
-                collate_fn,
+                cad_collate_fn,
                 tokenizer=tokenizer,
-                conv_type=args.conv_type,
                 use_mm_start_end=args.use_mm_start_end,
                 local_rank=args.local_rank,
             ),
@@ -424,10 +432,15 @@ def main(args):
         giou, ciou = validate(val_loader, model_engine, 0, writer, args)
         exit()
 
-    for epoch in range(args.start_epoch, args.epochs):
+    top_checkpoints = []   # will store best 1
+    max_keep = 1
+    save_root = os.path.join(args.log_dir, f"ckpt_model")
+    
+    for epoch in tqdm.tqdm(range(args.start_epoch, args.epochs), total=args.epochs):
         # train for one epoch
         train_iter = train(
             train_loader,
+            val_loader,
             model_engine,
             epoch,
             scheduler,
@@ -436,38 +449,58 @@ def main(args):
             args,
         )
         
-        if args.no_eval == False:
+        if not args.no_eval:
+
             giou, ciou = validate(val_loader, model_engine, epoch, writer, args)
-            is_best = giou > best_score
-            best_score = max(giou, best_score)
-            cur_ciou = ciou if is_best else cur_ciou
 
-        if args.no_eval or is_best:
-            save_dir = os.path.join(args.log_dir, "ckpt_model")
+            # 🔥 Use real DeepSpeed global step
+            global_step = model_engine.global_steps
+            tag = f"global_step{global_step}"
+
+            # Save checkpoint (ALL ranks must call this)
+            model_engine.save_checkpoint(save_root, tag=tag)
+
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
+
+            # Only rank 0 manages ranking + deletion
             if args.local_rank == 0:
-                torch.save(
-                    {"epoch": epoch},
-                    os.path.join(
-                        args.log_dir,
-                        "meta_log_giou{:.3f}_ciou{:.3f}.pth".format(
-                            best_score, cur_ciou
-                        ),
-                    ),
-                )
-                # try:
-                #     if os.path.exists(save_dir):
-                #         shutil.rmtree(save_dir)
-                # except: pass
-            torch.distributed.barrier()
-            model_engine.save_checkpoint(save_dir)
 
-        # if epoch%2==0:
-        #     model_engine.save_checkpoint(save_dir)
-        #     torch.distributed.barrier()
+                top_checkpoints.append({
+                    "score": giou,
+                    "ciou": ciou,
+                    "tag": tag
+                })
+
+                # Sort by giou (primary), ciou (secondary)
+                top_checkpoints = sorted(
+                    top_checkpoints,
+                    key=lambda x: (x["score"], x["ciou"]),
+                    reverse=True
+                )
+
+                # Keep only top 3
+                if len(top_checkpoints) > max_keep:
+                    to_remove = top_checkpoints[max_keep:]
+                    top_checkpoints = top_checkpoints[:max_keep]
+
+                    for ckpt in to_remove:
+                        remove_path = os.path.join(save_root, ckpt["tag"])
+                        print(f"Removing old checkpoint: {remove_path}")
+                        if os.path.exists(remove_path):
+                            try:
+                                shutil.rmtree(remove_path)
+                            except: pass
+                print(f"Current Top-{max_keep} Checkpoints:")
+                for ckpt in top_checkpoints:
+                    print(
+                        f"  {ckpt['tag']} | giou={ckpt['score']:.4f} | ciou={ckpt['ciou']:.4f}"
+                    )
 
 
 def train(
     train_loader,
+    val_loader,
     model,
     epoch,
     scheduler,
@@ -500,7 +533,7 @@ def train(
     # switch to train mode
     model.train()
     end = time.time()
-    for global_step, input_dict in enumerate(train_loader):
+    for global_step, input_dict in tqdm.tqdm(enumerate(train_loader), total=len(train_loader)):
 
     # for global_step in range(args.steps_per_epoch):
     #     for i in range(args.grad_accumulation_steps):
@@ -586,6 +619,41 @@ def train(
             if args.local_rank == 0:
                 writer.add_scalar("train/lr", curr_lr[0], global_step)
 
+        if global_step % 100==0:
+            if not args.no_eval and val_loader is not None:
+                giou, ciou = validate(val_loader, model, epoch, writer, args)
+
+        # if global_step > 0 and global_step % 20 == 0:
+
+        #     save_dir = os.path.join(args.log_dir, "ckpt_model")
+        #     tag = f"step_{global_step}"
+
+        #     # 1️⃣ All ranks save first
+        #     model.save_checkpoint(save_dir, tag=tag)
+
+        #     # 2️⃣ Wait until all ranks finished writing
+        #     torch.distributed.barrier()
+
+        #     # 3️⃣ Only rank 0 does cleanup AFTER saving is fully done
+        #     if args.local_rank == 0:
+        #         max_keep = 3
+
+        #         step_dirs = [
+        #             d for d in os.listdir(save_dir)
+        #             if d.startswith("step_")
+        #         ]
+
+        #         step_dirs = sorted(
+        #             step_dirs,
+        #             key=lambda x: int(x.replace("step_", ""))
+        #         )
+
+        #         if len(step_dirs) > max_keep:
+        #             to_delete = step_dirs[0]
+        #             full_path = os.path.join(save_dir, to_delete)
+        #             if os.path.exists(full_path):
+        #                 shutil.rmtree(full_path)
+
     return train_iter
 
 
@@ -646,6 +714,8 @@ def validate(val_loader, model_engine, epoch, writer, args):
         writer.add_scalar("val/ciou", ciou, epoch)
         print("giou: {:.4f}, ciou: {:.4f}".format(giou, ciou))
 
+    model_engine.train()
+    torch.cuda.empty_cache()
     return giou, ciou
 
 

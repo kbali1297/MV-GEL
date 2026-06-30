@@ -9,8 +9,9 @@ import math
 # # Append FreeCAD's Python library paths
 # sys.path.append(os.path.join(freecad_base, "lib"))   # core FreeCAD libraries
 # sys.path.append(os.path.join(freecad_base, "Mod"))   # FreeCAD Python modules (Part, Mesh, etc.)
-# Now you can import FreeCAD normally
-freecad_lib = os.path.join("/data/1bali/miniforge3/envs/LISA_multi_view", "lib")
+# Now you can import FreeCAD normally.
+# Resolve FreeCAD's lib dir from the active environment (override with FREECAD_LIB).
+freecad_lib = os.environ.get("FREECAD_LIB", os.path.join(sys.prefix, "lib"))
 sys.path.append(freecad_lib)
 import FreeCAD
 import Part

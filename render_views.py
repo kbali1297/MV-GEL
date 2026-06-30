@@ -3,6 +3,11 @@ from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from cad_utils import render_cad_views
 
+# Repo-relative data root. Dataset logs ({split}_dataset.log) are git-ignored;
+# override the location with the MVGEL_ROOT environment variable.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.environ.get("MVGEL_ROOT", ROOT)
+
 
 def process_cad_folder(cad_folder_path):
     cad_folder_path = cad_folder_path.strip()
@@ -48,7 +53,7 @@ def process_cad_folder(cad_folder_path):
 if __name__ == '__main__':
 
     for split in ['val_new']:
-        dataset_path = f'/data/1bali/Other_LLM_projects/ECCV_2026/LISA/{split}_dataset.log'
+        dataset_path = os.path.join(DATA_ROOT, f'{split}_dataset.log')
 
         with open(dataset_path) as fread:
             lines = fread.readlines()

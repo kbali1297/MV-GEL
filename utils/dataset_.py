@@ -12,6 +12,37 @@ import torch.nn.functional as F
 from pycocotools import mask
 from transformers import CLIPImageProcessor
 import trimesh
+
+# Repo-relative data root. Dataset logs (train_dataset.log / val_dataset*.log) and
+# the CAD dataset are git-ignored; by default we resolve relative paths against the
+# repo root (parent of utils/). Set MVGEL_ROOT to point at a separate data location.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DATA_ROOT = os.environ.get("MVGEL_ROOT", _REPO_ROOT)
+
+
+def _resolve_dataset_log(path):
+    """Resolve a (possibly relative) dataset-log path.
+
+    Absolute paths are returned unchanged. Relative paths are tried, in order,
+    against: the current working dir, the data root (MVGEL_ROOT), the repo root,
+    and the repo's ``configs/`` dir (where the checked-in split logs live). The
+    first existing candidate wins; if none exist we fall back to the data-root
+    join so the original (informative) FileNotFoundError is raised downstream.
+    """
+    if os.path.isabs(path):
+        return path
+    candidates = [
+        path,
+        os.path.join(_DATA_ROOT, path),
+        os.path.join(_REPO_ROOT, path),
+        os.path.join(_REPO_ROOT, "configs", path),
+    ]
+    for cand in candidates:
+        if os.path.exists(cand):
+            return cand
+    return os.path.join(_DATA_ROOT, path)
+
+
 try:
     from torch_cluster import fps
 except ImportError:  # torch_cluster is optional; only needed by fps_fast
@@ -292,7 +323,9 @@ class CAD_VQA_dataset(torch.utils.data.Dataset):
         split='train',
         caption_variant='corrected'
     ):
-        dataset_path = f'/data/1bali/Other_LLM_projects/ECCV_2026/LISA/{split}_dataset.log'
+        # Resolve `{split}_dataset.log` against DATA_ROOT, the repo root, and
+        # configs/ (where the committed train/val splits live).
+        dataset_path = _resolve_dataset_log(f'{split}_dataset.log')
         self.VQA_dict_list = []
 
         # Select which caption log files to read.
@@ -691,14 +724,14 @@ class CAD_ViewRank_Dataset(torch.utils.data.Dataset):
         # all entities in the dataset log are used (default behaviour).
 
         # `dataset_log_path` lets callers point at an arbitrary dataset log (e.g.
-        # val_dataset.log, val_dataset_total.log). When omitted we fall back to the
+        # val_dataset.log). When omitted we fall back to the
         # default `{split}_dataset.log` convention.
         if dataset_log_path is not None:
             dataset_path = dataset_log_path
             if not os.path.isabs(dataset_path):
-                dataset_path = f'/data/1bali/Other_LLM_projects/ECCV_2026/LISA/{dataset_path}'
+                dataset_path = _resolve_dataset_log(dataset_path)
         else:
-            dataset_path = f'/data/1bali/Other_LLM_projects/ECCV_2026/LISA/{split}_dataset.log'
+            dataset_path = os.path.join(_DATA_ROOT, f'{split}_dataset.log')
 
         # Which per-CAD caption log to read:
         #   'corrected' -> views_and_ques_{edge,face}_augmented_corrected.log (viewpoint-fixed)

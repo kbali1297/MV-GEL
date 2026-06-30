@@ -12,21 +12,22 @@ import tqdm
 import transformers
 from peft import LoraConfig, get_peft_model
 from torch.utils.tensorboard import SummaryWriter
-import tqdm
-from model.GLISA import LISAForCausalLM, DepthEncoder
+
+from model.LISA import LISAForCausalLM
 from model.llava import conversation as conversation_lib
-from utils.dataset_ import CAD_VQA_dataset, cad_collate_fn
+from utils.dataset import HybridDataset, ValDataset, collate_fn
 from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
                          AverageMeter, ProgressMeter, Summary, dict_to_cuda,
                          intersectionAndUnionGPU)
 
 import torch.distributed as dist
-import yaml
 
-def load_config(path):
-    with open(path, "r") as f:
-        cfg = yaml.safe_load(f)
-    return cfg
+# Repo-relative paths: ROOT is this file's dir (code); DATA_ROOT (override via
+# MVGEL_ROOT) holds the git-ignored base weights. The released LISA-CAD checkpoint
+# is a 7B model, so the base defaults to LISA-7B-v1-explanatory.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.environ.get("MVGEL_ROOT", ROOT)
+
 
 def init_distributed():
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
@@ -52,7 +53,7 @@ def parse_args(args):
     parser = argparse.ArgumentParser(description="LISA Model Training")
     parser.add_argument("--local_rank", default=0, type=int, help="node rank")
     parser.add_argument(
-        "--version", default="/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/load_files&weights/LISA-7B-v1-explanatory"
+        "--version", default=os.path.join(DATA_ROOT, "model/load_files&weights/LISA-7B-v1-explanatory")
     )
     parser.add_argument("--vis_save_path", default="./vis_output", type=str)
     parser.add_argument(
@@ -71,13 +72,28 @@ def parse_args(args):
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
     parser.add_argument("--load_in_4bit", action="store_true", default=False)
 
+    parser.add_argument(
+        "--dataset", default="sem_seg||refer_seg||vqa||reason_seg", type=str
+    )
+    parser.add_argument("--sample_rates", default="9,3,3,1", type=str)
+    parser.add_argument(
+        "--sem_seg_data",
+        default="ade20k||cocostuff||pascal_part||paco_lvis||mapillary",
+        type=str,
+    )
+    parser.add_argument(
+        "--refer_seg_data", default="refclef||refcoco||refcoco+||refcocog", type=str
+    )
+    parser.add_argument("--vqa_data", default="llava_instruct_150k", type=str)
+    parser.add_argument("--reason_seg_data", default="ReasonSeg|train", type=str)
+    parser.add_argument("--val_dataset", default="ReasonSeg|train", type=str)
     parser.add_argument("--dataset_dir", default="./dataset", type=str)
     parser.add_argument("--log_base_dir", default="./runs", type=str)
     parser.add_argument("--exp_name", default="lisa", type=str)
-    parser.add_argument("--epochs", default=20, type=int)
+    parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--steps_per_epoch", default=500, type=int)
     parser.add_argument(
-        "--batch_size", default=40, type=int, help="batch size per device per step"
+        "--batch_size", default=10, type=int, help="batch size per device per step"
     )
     parser.add_argument(
         "--grad_accumulation_steps",
@@ -100,7 +116,7 @@ def parse_args(args):
     parser.add_argument("--exclude_val", action="store_true", default=False)
     parser.add_argument("--no_eval", action="store_true", default=False)
     parser.add_argument("--eval_only", action="store_true", default=False)
-    parser.add_argument("--vision_pretrained", default="/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth", type=str)
+    parser.add_argument("--vision_pretrained", default=os.path.join(DATA_ROOT, "model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth"), type=str)
     parser.add_argument("--out_dim", default=256, type=int)
     parser.add_argument("--resume", default="", type=str)
     parser.add_argument("--print_freq", default=1, type=int)
@@ -115,7 +131,6 @@ def parse_args(args):
         type=str,
         choices=["llava_v1", "llava_llama_2"],
     )
-    parser.add_argument("--depth_fusion_mode", default="gated_add", type=str)
     return parser.parse_args(args)
 
 
@@ -171,38 +186,11 @@ def main(args):
     model.enable_input_require_grads()
     model.gradient_checkpointing_enable()
 
-    ########### Initialize and load PointMAE here ###########
-    # geometry_encoder_state_dictpath = '/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/load_files&weights/pretrain.pth'
-    # point_encoder = PointMAEBackbone(config=load_config('/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/pretrain.yaml'))
-    # point_encoder_state_dict = torch.load(geometry_encoder_state_dictpath, map_location='cpu')
-    # #geometry_encoder.load_state_dict(geometry_encoder_state_dict["base_model"])
-    
-    # ckpt = point_encoder_state_dict["base_model"]
-
-    # # strip prefixes
-    # new_state_dict = {}
-    # for k, v in ckpt.items():
-    #     if k.startswith("module."):
-    #         k = k[len("module."):]
-    #     if k.startswith("MAE_encoder."):
-    #         k = k[len("MAE_encoder."):]
-    #     if k.startswith("MAE_decoder.") or k.startswith("decoder") or k.startswith("increase") or k.startswith("mask"):
-    #         #k = k[len("MAE_decoder."):]
-    #         continue
-    #     new_state_dict[k] = v
-
-    # point_encoder.load_state_dict(new_state_dict, strict=True)
-    ##########################################################
-
-    #####################Intialize and load Depth map Encoder#########
-    depth_encoder = DepthEncoder()
-    depth_fusion_mode = args.depth_fusion_mode
-
     model.get_model().initialize_vision_modules(model.get_model().config)
     vision_tower = model.get_model().get_vision_tower()
     vision_tower.to(dtype=torch_dtype, device=args.local_rank)
     if not args.eval_only:
-        model.get_model().initialize_lisa_modules(model.get_model().config, depth_backbone=depth_encoder, depth_fusion_mode=depth_fusion_mode)#, geometry_backbone = point_encoder)
+        model.get_model().initialize_lisa_modules(model.get_model().config)
 
     for p in vision_tower.parameters():
         p.requires_grad = False
@@ -261,7 +249,7 @@ def main(args):
         if any(
             [
                 x in n
-                for x in ["lm_head", "embed_tokens", "mask_decoder", "text_hidden_fcs", "depth_encoder", "depth_fusion"]#, "geometry_cross_attn_layers", "geometry_encoder"]
+                for x in ["lm_head", "embed_tokens", "mask_decoder", "text_hidden_fcs"]
             ]
         ):
             print("n: ", n, "p.shape: ", p.shape)
@@ -273,10 +261,36 @@ def main(args):
     else:
         world_size = 1
     args.distributed = world_size > 1
-    train_dataset = CAD_VQA_dataset(tokenizer, args.vision_tower, 'train')
+    train_dataset = HybridDataset(
+        args.dataset_dir,
+        tokenizer,
+        args.vision_tower,
+        # samples_per_epoch=args.batch_size
+        # * args.grad_accumulation_steps
+        # * args.steps_per_epoch
+        # * world_size,
+        samples_per_epoch=None,
+        precision=args.precision,
+        image_size=args.image_size,
+        num_classes_per_sample=args.num_classes_per_sample,
+        exclude_val=args.exclude_val,
+        dataset=args.dataset,
+        sample_rate=[float(x) for x in args.sample_rates.split(",")],
+        sem_seg_data=args.sem_seg_data,
+        refer_seg_data=args.refer_seg_data,
+        vqa_data=args.vqa_data,
+        reason_seg_data=args.reason_seg_data,
+        explanatory=args.explanatory,
+    )
 
     if args.no_eval == False:
-        val_dataset = CAD_VQA_dataset(tokenizer, args.vision_tower, 'val')
+        val_dataset = ValDataset(
+            args.dataset_dir,
+            tokenizer,
+            args.vision_tower,
+            args.val_dataset,
+            args.image_size,
+        )
         print(
             f"Training with {len(train_dataset)} examples and validating with {len(val_dataset)} examples."
         )
@@ -345,23 +359,24 @@ def main(args):
 
     trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-    #print("Trainable tensors passed to DeepSpeed:", len(trainable_params))
+    print("Trainable tensors passed to DeepSpeed:", len(trainable_params))
     model_engine, optimizer, train_loader, scheduler = deepspeed.initialize(
         model=model,
         model_parameters= trainable_params,
         training_data=train_dataset,
         collate_fn=partial(
-            cad_collate_fn,
+            collate_fn,
             tokenizer=tokenizer,
+            conv_type=args.conv_type,
             use_mm_start_end=args.use_mm_start_end,
             local_rank=args.local_rank,
         ),
         config=ds_config,
     )
 
-    # print("Optimizer param groups:")
-    # for i, group in enumerate(optimizer.param_groups):
-    #     print(f"Group {i} param count:", len(group["params"]))
+    print("Optimizer param groups:")
+    for i, group in enumerate(optimizer.param_groups):
+        print(f"Group {i} param count:", len(group["params"]))
 
     steps_per_epoch = len(train_loader)
     total_steps = args.epochs * steps_per_epoch
@@ -369,7 +384,7 @@ def main(args):
 
     # resume deepspeed checkpoint
     if args.auto_resume and len(args.resume) == 0:
-        resume = os.path.join(args.log_dir, f"ckpt_model_glisa_{depth_fusion_mode}")
+        resume = os.path.join(args.log_dir, "ckpt_model")
         if os.path.exists(resume):
             args.resume = resume
 
@@ -400,8 +415,9 @@ def main(args):
             pin_memory=False,
             sampler=val_sampler,
             collate_fn=partial(
-                cad_collate_fn,
+                collate_fn,
                 tokenizer=tokenizer,
+                conv_type=args.conv_type,
                 use_mm_start_end=args.use_mm_start_end,
                 local_rank=args.local_rank,
             ),
@@ -413,16 +429,11 @@ def main(args):
     if args.eval_only:
         giou, ciou = validate(val_loader, model_engine, 0, writer, args)
         exit()
-    
-    top_checkpoints = []   # will store best 1
-    max_keep = 1
-    save_root = os.path.join(args.log_dir, f"ckpt_model_glisa_{depth_fusion_mode}")
 
-    for epoch in tqdm.tqdm(range(args.start_epoch, args.epochs), total=args.epochs):
+    for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch
         train_iter = train(
             train_loader,
-            val_loader,
             model_engine,
             epoch,
             scheduler,
@@ -431,57 +442,38 @@ def main(args):
             args,
         )
         
-        if not args.no_eval:
-
+        if args.no_eval == False:
             giou, ciou = validate(val_loader, model_engine, epoch, writer, args)
+            is_best = giou > best_score
+            best_score = max(giou, best_score)
+            cur_ciou = ciou if is_best else cur_ciou
 
-            # 🔥 Use real DeepSpeed global step
-            global_step = model_engine.global_steps
-            tag = f"global_step{global_step}"
-
-            # Save checkpoint (ALL ranks must call this)
-            model_engine.save_checkpoint(save_root, tag=tag)
-
-            if torch.distributed.is_initialized():
-                torch.distributed.barrier()
-
-            # Only rank 0 manages ranking + deletion
+        if args.no_eval or is_best:
+            save_dir = os.path.join(args.log_dir, "ckpt_model")
             if args.local_rank == 0:
-
-                top_checkpoints.append({
-                    "score": giou,
-                    "ciou": ciou,
-                    "tag": tag
-                })
-
-                # Sort by giou (primary), ciou (secondary)
-                top_checkpoints = sorted(
-                    top_checkpoints,
-                    key=lambda x: (x["score"], x["ciou"]),
-                    reverse=True
+                torch.save(
+                    {"epoch": epoch},
+                    os.path.join(
+                        args.log_dir,
+                        "meta_log_giou{:.3f}_ciou{:.3f}.pth".format(
+                            best_score, cur_ciou
+                        ),
+                    ),
                 )
+                # try:
+                #     if os.path.exists(save_dir):
+                #         shutil.rmtree(save_dir)
+                # except: pass
+            torch.distributed.barrier()
+            model_engine.save_checkpoint(save_dir)
 
-                # Keep only top 3
-                if len(top_checkpoints) > max_keep:
-                    to_remove = top_checkpoints[max_keep:]
-                    top_checkpoints = top_checkpoints[:max_keep]
+        # if epoch%2==0:
+        #     model_engine.save_checkpoint(save_dir)
+        #     torch.distributed.barrier()
 
-                    for ckpt in to_remove:
-                        remove_path = os.path.join(save_root, ckpt["tag"])
-                        print(f"Removing old checkpoint: {remove_path}")
-                        if os.path.exists(remove_path):
-                            try:
-                                shutil.rmtree(remove_path)
-                            except: pass
-                print("Current Top-3 Checkpoints:")
-                for ckpt in top_checkpoints:
-                    print(
-                        f"  {ckpt['tag']} | giou={ckpt['score']:.4f} | ciou={ckpt['ciou']:.4f}"
-                    )
 
 def train(
     train_loader,
-    val_loader,
     model,
     epoch,
     scheduler,
@@ -514,7 +506,7 @@ def train(
     # switch to train mode
     model.train()
     end = time.time()
-    for global_step, input_dict in tqdm.tqdm(enumerate(train_loader), total=len(train_loader)):
+    for global_step, input_dict in enumerate(train_loader):
 
     # for global_step in range(args.steps_per_epoch):
     #     for i in range(args.grad_accumulation_steps):
@@ -530,15 +522,12 @@ def train(
         if args.precision == "fp16":
             input_dict["images"] = input_dict["images"].half()
             input_dict["images_clip"] = input_dict["images_clip"].half()
-            input_dict["depth_maps"] = input_dict["depth_maps"].half()
         elif args.precision == "bf16":
             input_dict["images"] = input_dict["images"].bfloat16()
             input_dict["images_clip"] = input_dict["images_clip"].bfloat16()
-            input_dict["depth_maps"] = input_dict["depth_maps"].bfloat16()
         else:
             input_dict["images"] = input_dict["images"].float()
             input_dict["images_clip"] = input_dict["images_clip"].float()
-            input_dict["depth_maps"] = input_dict["depth_maps"].float()
 
         output_dict = model(**input_dict)
 
@@ -603,9 +592,6 @@ def train(
             if args.local_rank == 0:
                 writer.add_scalar("train/lr", curr_lr[0], global_step)
 
-        if global_step % 100==0:
-            giou, ciou = validate(val_loader, model, epoch, writer, args)
-
     return train_iter
 
 
@@ -623,15 +609,12 @@ def validate(val_loader, model_engine, epoch, writer, args):
         if args.precision == "fp16":
             input_dict["images"] = input_dict["images"].half()
             input_dict["images_clip"] = input_dict["images_clip"].half()
-            input_dict["depth_maps"] = input_dict["depth_maps"].half()
         elif args.precision == "bf16":
             input_dict["images"] = input_dict["images"].bfloat16()
             input_dict["images_clip"] = input_dict["images_clip"].bfloat16()
-            input_dict["depth_maps"] = input_dict["depth_maps"].bfloat16()
         else:
             input_dict["images"] = input_dict["images"].float()
             input_dict["images_clip"] = input_dict["images_clip"].float()
-            input_dict["depth_maps"] = input_dict["depth_maps"].float()
 
         with torch.no_grad():
             output_dict = model_engine(**input_dict)
@@ -669,8 +652,6 @@ def validate(val_loader, model_engine, epoch, writer, args):
         writer.add_scalar("val/ciou", ciou, epoch)
         print("giou: {:.4f}, ciou: {:.4f}".format(giou, ciou))
 
-    model_engine.train()
-    torch.cuda.empty_cache()
     return giou, ciou
 
 

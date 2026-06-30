@@ -310,7 +310,12 @@ if __name__ == "__main__":
     if api_key is None:
         raise RuntimeError("OPENROUTER_API_KEY not set")
 
-    dataset_path = "/data/1bali/Other_LLM_projects/ECCV_2026/ABC_CAD_Dataset_small2"
+    dataset_path = os.environ.get(
+        "MVGEL_CAD_DATASET",
+        os.path.join(
+            os.path.dirname(os.environ.get(
+                "MVGEL_ROOT", os.path.dirname(os.path.abspath(__file__)))),
+            "ABC_CAD_Dataset_small2"))
     cad_folders = sorted(os.listdir(dataset_path))
 
     manager = mp.Manager()

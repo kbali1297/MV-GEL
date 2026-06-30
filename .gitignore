@@ -58,3 +58,7 @@ env/
 
 # ── Paper PDFs ─────────────────────────────────────────
 *.pdf
+
+# ── Paper source / submission artefacts ────────────────
+*.zip
+_zipcheck/

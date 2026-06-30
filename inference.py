@@ -14,13 +14,18 @@ from inspect_masks import inspect_masks
 
 from tqdm import tqdm
 
+# Repo-relative paths: ROOT is this file's dir (code); DATA_ROOT (override via
+# MVGEL_ROOT) holds the git-ignored base weights / dataset.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.environ.get("MVGEL_ROOT", ROOT)
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", default='/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/load_files&weights/LISA-7B-v1-explanatory_finetuned_deepspeed_2_CAD', type=str)#'/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/load_files&weights/LISA-7B-v1-explanatory', type=str)
-    parser.add_argument("--dataset_dir", default='/data/1bali/Other_LLM_projects/ECCV_2026/LISA/dataset',type=str)
+    parser.add_argument("--model_path", default=os.path.join(DATA_ROOT, 'model/load_files&weights/LISA-7B-v1-explanatory_finetuned_deepspeed_2_CAD'), type=str)
+    parser.add_argument("--dataset_dir", default=os.path.join(DATA_ROOT, 'dataset'), type=str)
     parser.add_argument("--val_dataset", default="ReasonSeg|train", type=str)
     parser.add_argument("--vision_tower", default="openai/clip-vit-large-patch14", type=str)
-    parser.add_argument("--vision_pretrained", default="/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth", type=str)
+    parser.add_argument("--vision_pretrained", default=os.path.join(DATA_ROOT, "model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth"), type=str)
     parser.add_argument("--image_size", default=1024, type=int)
     parser.add_argument("--precision", default="bf16", choices=["fp32","bf16","fp16"], type=str)
     parser.add_argument("--device", default="cuda", type=str)

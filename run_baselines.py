@@ -6,14 +6,14 @@ over the 1535-entity corrected test set across all GPUs.
 Each baseline runs in its OWN conda env (the model forward needs that env);
 GT-feature extraction is shelled to LISA_multi_view internally by each script.
 
-The 1535 entities are exposed deterministically by CAD_ViewRank_Dataset when
+The 1535 eval entities are exposed deterministically by CAD_ViewRank_Dataset when
 constructed with:
-    dataset_log_path = val_dataset_1535.log         (218 folders)
-    entity_allowlist = val_dataset_1535_entities.txt (1535 keys)
+    dataset_log_path = val_dataset.log              (218 CAD folders)
+    entity_allowlist = val_dataset_1535_entities.txt (1535 entity keys)
 We shard by dataset index range [start_idx, end_idx) so each process handles a
 disjoint slice. Each (config, shard) writes its own experiment_name dir, so the
 per-shard localization_metrics_*.log files never collide. Aggregate afterwards
-with aggregate_baselines_1535.py.
+with aggregate_baselines.py.
 
 A lightweight supervisor keeps at most --per-gpu jobs on each GPU, assigning the
 next pending job to the least-loaded eligible GPU and refilling as jobs finish.
@@ -26,7 +26,7 @@ import subprocess
 
 # Repo root = directory holding this script (works wherever the repo is cloned).
 ROOT = os.path.dirname(os.path.abspath(__file__))
-VAL_LOG = os.path.join(ROOT, "configs", "val_dataset_1535.log")
+VAL_LOG = os.path.join(ROOT, "configs", "val_dataset.log")
 ALLOWLIST = os.path.join(ROOT, "configs", "val_dataset_1535_entities.txt")
 LOG_DIR = os.path.join(ROOT, "run_logs_baselines")
 

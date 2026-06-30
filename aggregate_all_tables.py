@@ -32,7 +32,9 @@ import glob
 import numpy as np
 import pandas as pd
 
-ROOT = '/data/1bali/Other_LLM_projects/ECCV_2026/LISA'
+# Repo-relative root; override with the MVGEL_ROOT environment variable.
+ROOT = os.environ.get(
+    "MVGEL_ROOT", os.path.dirname(os.path.abspath(__file__)))
 PARTSLIP_DIR = os.path.join(
     ROOT, '162-PartSLIP-Low-Shot-Part-Segmentation-for-3D-Point-Clouds-via-'
           'Pretrained-Image-Language-Models')
@@ -53,8 +55,8 @@ DISP = ['cliplora_cross_attention', 'cliplora_film', 'cliplora_no_fusion',
 # REPRODUCIBILITY MANIFEST
 # ----------------------------------------------------------------------
 # Seg. VLM checkpoints
-#   LISA-CAD       : runs/CAD_LISA_repro20/ckpt_model/global_step5076 (domain-adapted)
-#   LISA-Vanilla   : base LISA-7B weights (sentinel "vanilla" in GeoLocLM_exp.py)
+#   LISA-CAD       : runs/CAD_LISA/global_step5076 (domain-adapted)
+#   LISA-Vanilla   : base LISA-7B weights (sentinel "vanilla" in infer.py)
 # View-selector checkpoints (LISA repo root)
 #   Cross-Attention: best_model_view_ranker_cliplora_cross_attention.pt
 #   FiLM           : best_model_view_ranker_cliplora_film.pt

@@ -25,7 +25,9 @@ def prepare_split(dataset_log_path):
                 fwrite.write(f'{folder}')
 
 if __name__ == '__main__':
-    dataset_log_path = '/data/1bali/Other_LLM_projects/ECCV_2026/dataset.log'
+    DATA_ROOT = os.environ.get(
+        "MVGEL_ROOT", os.path.dirname(os.path.abspath(__file__)))
+    dataset_log_path = os.path.join(DATA_ROOT, 'dataset.log')
     np.random.seed(42)
     prepare_split(dataset_log_path)
 

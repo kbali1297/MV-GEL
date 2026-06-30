@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Launch all 12 GeoLocLM_exp.py evaluation runs across 4 H100 GPUs.
+"""Launch all 12 infer.py evaluation runs across 4 H100 GPUs.
 
 Grid (2 Seg. VLMs x 6 view selectors = 12 runs):
     Seg. VLM      : LISA-CAD, LISA-Vanilla
@@ -8,7 +8,7 @@ Grid (2 Seg. VLMs x 6 view selectors = 12 runs):
 Scheduling:
     - 12 runs / 4 GPUs = 3 runs per GPU (round-robin -> uniform load).
     - Each run ~17 GB -> ~51 GB/GPU (H100 80 GB: comfortably fits).
-    - GeoLocLM_exp.py hardcodes device="cuda:0", so every process is pinned to
+    - infer.py hardcodes device="cuda:0", so every process is pinned to
       one physical GPU via CUDA_VISIBLE_DEVICES (which it then sees as cuda:0).
 
 Logs:
@@ -16,12 +16,12 @@ Logs:
     A summary table is printed at the end with exit codes and log paths.
 
 Usage:
-    python run_GeoLocLM_all.py                 # launch everything
-    python run_GeoLocLM_all.py --dry-run       # print the plan, launch nothing
-    python run_GeoLocLM_all.py --num-gpus 4 --num-top-views 5 --view-nms 0
+    python run_MVGEL.py                 # launch everything
+    python run_MVGEL.py --dry-run       # print the plan, launch nothing
+    python run_MVGEL.py --num-gpus 4 --num-top-views 5 --view-nms 0
 
     For specific entities:
-    nohup /data/1bali/miniforge3/envs/LISA_multi_view/bin/python run_GeoLocLM_all.py \
+    nohup /data/1bali/miniforge3/envs/LISA_multi_view/bin/python run_MVGEL.py \
   --val-dataset-log val_dataset_dupes.log \
   --entity-allowlist val_dataset_dupes_entities.txt \
   --log-dir run_logs_GeoLocLM_dupes \
@@ -36,19 +36,22 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+# Where large, git-ignored artefacts live (the runs/CAD_LISA checkpoint and the
+# view-selector .pt files). Defaults to ROOT; override with MVGEL_ROOT.
+DATA_ROOT = os.environ.get("MVGEL_ROOT", ROOT)
 
 # --- Seg. VLM checkpoints ----------------------------------------------------
-CAD_LISA = os.path.join(ROOT, "/data/1bali/Other_LLM_projects/ECCV_2026/LISA/runs/CAD_LISA_repro20/ckpt_model/global_step5076")
+CAD_LISA = os.path.join(DATA_ROOT, "runs/CAD_LISA/global_step5076")
 VANILLA_LISA = "vanilla"  # any path WITHOUT 'CAD_LISA' -> base LISA weights
 
 # --- View selectors ----------------------------------------------------------
-# The four learned models live in the LISA root (ignore the "copy" ones).
+# The four learned models live in the data root.
 # 'random' and 'GT' are sentinel strings the eval script understands directly.
 VIEW_SELECTORS = [
-    os.path.join(ROOT, "best_model_view_ranker_cliplora_cross_attention.pt"),
-    os.path.join(ROOT, "best_model_view_ranker_cliplora_film.pt"),
-    os.path.join(ROOT, "best_model_view_ranker_cliplora_no_fusion.pt"),
-    os.path.join(ROOT, "best_model_view_ranker_cliplora_only_clip.pt"),
+    os.path.join(DATA_ROOT, "best_model_view_ranker_cliplora_cross_attention.pt"),
+    os.path.join(DATA_ROOT, "best_model_view_ranker_cliplora_film.pt"),
+    os.path.join(DATA_ROOT, "best_model_view_ranker_cliplora_no_fusion.pt"),
+    os.path.join(DATA_ROOT, "best_model_view_ranker_cliplora_only_clip.pt"),
     "random",
     "GT",
 ]
@@ -70,7 +73,7 @@ def view_selector_tag(vs: str) -> str:
 
 
 def build_jobs(num_top_views: int, view_nms: int, render_target_masks: int = 0,
-               val_dataset_log: str = "val_dataset_total.log",
+               val_dataset_log: str = "configs/val_dataset.log",
                entity_allowlist: str = None, gt_timeout: int = 20,
                gt_view_offset: int = 0, gt_target_view: int = 0,
                selectors=None, shard_specs=None, llms=None):
@@ -101,7 +104,7 @@ def build_jobs(num_top_views: int, view_nms: int, render_target_masks: int = 0,
                     name = f"{name}__{shard_tag}"
                 cmd = [
                     sys.executable,
-                    os.path.join(ROOT, "GeoLocLM_exp.py"),
+                    os.path.join(ROOT, "infer.py"),
                     "--view_selector_model_path", vs,
                     "--LISA_model_path", llm_path,
                     "--num_top_views", str(num_top_views),
@@ -173,33 +176,32 @@ def main():
     parser.add_argument("--num-gpus", type=int, default=4)
     parser.add_argument("--num-top-views", type=int, default=10)
     parser.add_argument("--view-nms", type=int, default=0)
-    parser.add_argument("--val-dataset-log", default="val_dataset_total.log",
-                        help="Validation dataset log forwarded to GeoLocLM_exp.py. "
-                             "Defaults to the FULL eval set (val_dataset_total.log). "
-                             "Pass val_dataset.log for the small 60-CAD subset. The "
-                             "log name is appended to each run's output dir so results "
-                             "don't collide with other splits.")
+    parser.add_argument("--val-dataset-log", default="configs/val_dataset.log",
+                        help="Validation dataset log forwarded to infer.py. "
+                             "Defaults to the committed eval split (configs/val_dataset.log, "
+                             "218 CAD folders). The log name is appended to each run's "
+                             "output dir so results don't collide with other splits.")
     parser.add_argument("--render-target-masks", type=int, default=0,
-                        help="Forwarded to GeoLocLM_exp.py. 0 (default) skips the "
+                        help="Forwarded to infer.py. 0 (default) skips the "
                              "slow GT target-mask renders; localization metrics are "
                              "unaffected. Set 1 only when you want the diagnostic 2D "
                              "IoU printouts / inspect_masks overlays.")
     parser.add_argument("--entity-allowlist", default=None,
-                        help="Forwarded to GeoLocLM_exp.py --entity_allowlist. Path to a "
+                        help="Forwarded to infer.py --entity_allowlist. Path to a "
                              "file with one 'cad_name,feature,feature_idx' key per line; "
                              "restricts every run to exactly those entities (clean "
                              "single-pass re-run of a specific entity subset).")
     parser.add_argument("--gt-timeout", type=int, default=20,
-                        help="Forwarded to GeoLocLM_exp.py --gt_timeout. Hard wall-clock "
+                        help="Forwarded to infer.py --gt_timeout. Hard wall-clock "
                              "timeout (seconds) for the gt_features subprocess. Raise "
                              "(e.g. 120) when recovering heavy meshes that the default "
                              "20s skips.")
     parser.add_argument("--gt-view-offset", type=int, default=0,
-                        help="Forwarded to GeoLocLM_exp.py --gt_view_offset. ORACLE (GT) "
+                        help="Forwarded to infer.py --gt_view_offset. ORACLE (GT) "
                              "rank offset: 0=best view (standard), 1=2nd-best, etc. "
                              "Offset>0 runs land in separate _gtoffset{N} dirs.")
     parser.add_argument("--gt-target-view", type=int, default=0,
-                        help="Forwarded to GeoLocLM_exp.py --gt_target_view. If 1, the "
+                        help="Forwarded to infer.py --gt_target_view. If 1, the "
                              "GT oracle is the caption-marked TARGET view (the true view "
                              "oracle the selectors aim to recover) instead of the "
                              "top_views_desc ranking. Top-1 only; lands in separate "

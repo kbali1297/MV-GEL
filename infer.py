@@ -22,6 +22,17 @@ import time
 import gc
 import multiprocessing as mp
 
+# ---------------------------------------------------------------------------
+# Path resolution (repo-relative, override-able).
+#   ROOT      -> the repo checkout (this file's directory): code + configs live here.
+#   DATA_ROOT -> where large, git-ignored artefacts live (base LISA-7B / SAM / CLIP
+#                weights, the runs/CAD_LISA checkpoint, view-selector .pt files,
+#                and the CAD dataset). Defaults to ROOT; set MVGEL_ROOT to point at
+#                a separate weights/data location without editing the code.
+# ---------------------------------------------------------------------------
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.environ.get("MVGEL_ROOT", ROOT)
+
 
 def _gt_worker(q, cad_file_path, vertices, faces, feature, feature_idx):
     """Worker process: compute GT features and put result on the queue."""
@@ -112,13 +123,13 @@ if __name__ == '__main__':
     device = "cuda:0"
 
     parser = argparse.ArgumentParser(description="MVGEL training")
-    parser.add_argument("--view_selector_model_path", default="/data/1bali/Other_LLM_projects/ECCV_2026/LISA/best_model_view_ranker_cliplora_film.pt", type=str)
-    parser.add_argument("--LISA_model_path", default="/data/1bali/Other_LLM_projects/ECCV_2026/LISA/runs/lisa_repro20/ckpt_model", type=str)
+    parser.add_argument("--view_selector_model_path", default=os.path.join(DATA_ROOT, "best_model_view_ranker_cliplora_film.pt"), type=str)
+    parser.add_argument("--LISA_model_path", default=os.path.join(DATA_ROOT, "runs/CAD_LISA/global_step5076"), type=str)
     parser.add_argument('--num_top_views', default=1, type=int)
     parser.add_argument('--view_nms', default=0, type=int)
     parser.add_argument('--val_dataset_log', default=None, type=str,
                         help='Path to a custom validation dataset log to evaluate on '
-                             '(e.g. val_dataset.log or val_dataset_total.log). May be a '
+                             '(e.g. val_dataset.log). May be a '
                              'bare filename (resolved against the LISA repo root) or an '
                              'absolute path. If omitted, the default val split '
                              '(val_dataset.log) is used.')
@@ -186,6 +197,22 @@ if __name__ == '__main__':
     #args.view_selector_model_path = 'random'
     modality_fusion_variants = ['cross_attention', 'film', 'no_fusion', 'only_clip'] #'add', 'gated_add',
 
+    # Resolve relative checkpoint paths so bare filenames (e.g.
+    # "best_model_view_ranker_cliplora_film.pt") work regardless of the current
+    # working directory. Sentinel values ('random'/'GT'/'vanilla') and absolute or
+    # already-existing paths are left untouched.
+    def _resolve_ckpt(p, sentinels=()):
+        if p in sentinels or os.path.isabs(p) or os.path.exists(p):
+            return p
+        for base in (DATA_ROOT, ROOT):
+            cand = os.path.join(base, p)
+            if os.path.exists(cand):
+                return cand
+        return p
+
+    args.view_selector_model_path = _resolve_ckpt(args.view_selector_model_path, sentinels=('random', 'GT'))
+    args.LISA_model_path = _resolve_ckpt(args.LISA_model_path, sentinels=('vanilla',))
+
     # Optional entity-level allowlist: a text file with one
     # "cad_name,feature,feature_idx" key per line (feature is 'edge'/'face').
     # When provided, evaluation is restricted to exactly those entities, so a clean
@@ -195,7 +222,7 @@ if __name__ == '__main__':
     if args.entity_allowlist:
         allow_path = args.entity_allowlist
         if not os.path.isabs(allow_path):
-            allow_path = os.path.join('/data/1bali/Other_LLM_projects/ECCV_2026/LISA', allow_path)
+            allow_path = os.path.join(ROOT, allow_path)
         entity_allowlist = set()
         with open(allow_path, 'r') as fh:
             for line in fh:
@@ -259,7 +286,7 @@ if __name__ == '__main__':
     # ------------------------
     # Load model
     # ------------------------
-    lisa_model_path = '/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/load_files&weights/LISA-7B-v1-explanatory'
+    lisa_model_path = os.path.join(DATA_ROOT, 'model/load_files&weights/LISA-7B-v1-explanatory')
     segllm_tokenizer = AutoTokenizer.from_pretrained(
         lisa_model_path,
         use_fast=False
@@ -269,7 +296,7 @@ if __name__ == '__main__':
     model_args = {
         "out_dim": 256,
         "seg_token_idx": seg_token_idx,
-        "vision_pretrained": "/data/1bali/Other_LLM_projects/ECCV_2026/LISA/model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth",
+        "vision_pretrained": os.path.join(DATA_ROOT, "model/segment_anything/load_files&weights/sam_vit_h_4b8939.pth"),
         "vision_tower": "openai/clip-vit-large-patch14",
         "use_mm_start_end": True,
     }

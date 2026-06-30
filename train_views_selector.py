@@ -16,7 +16,10 @@ import sys
 import torch.multiprocessing as mp
 import argparse
 
-# def compute_img_rank_batch(img_batch, clip_img_processor):
+# Repo-relative paths: ROOT is this file's dir; DATA_ROOT (override via MVGEL_ROOT)
+# is where the git-ignored view-selector checkpoints are written/resumed.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.environ.get("MVGEL_ROOT", ROOT)
 
 #     images, ranks, image_paths = [],[],[]
 #     for sample in img_batch:
@@ -85,7 +88,7 @@ if __name__ == '__main__':
         lr=1e-4,
         weight_decay=1e-4
     )
-    model_path = f"/data/1bali/Other_LLM_projects/ECCV_2026/LISA/best_model_view_ranker_cliplora_{fusion_method}.pt"
+    model_path = os.path.join(DATA_ROOT, f"best_model_view_ranker_cliplora_{fusion_method}.pt")
     if os.path.exists(model_path):
         checkpoint = torch.load(model_path, map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])

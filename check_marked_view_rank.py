@@ -11,8 +11,10 @@ import re
 import ast
 import glob
 
-ECCV = '/data/1bali/Other_LLM_projects/ECCV_2026'
-ROOT = f'{ECCV}/LISA'
+# Repo-relative root; override with the MVGEL_ROOT environment variable.
+ROOT = os.environ.get(
+    "MVGEL_ROOT", os.path.dirname(os.path.abspath(__file__)))
+ECCV = os.path.dirname(ROOT)
 ALLOWLIST = f'{ROOT}/val_dataset_1535_entities.txt'
 DATASETS = [f'{ECCV}/ABC_CAD_Dataset_small2', f'{ECCV}/ABC_CAD_Dataset_small3']
 

@@ -35,8 +35,8 @@ export PARTSLIP_PY=$(conda run -n PARTSLIP   which python)
 export FIND3D_PY=$(conda run   -n find3d     which python)
 export PATCHALIGN_PY=$(conda run -n patchalign3d which python)
 
-python run_baselines_1535.py --configs all --shards 6 --gpus 0,1,2,3
-python aggregate_baselines_1535.py     # → configs/means_baselines_1535.csv + LaTeX rows
+python run_baselines.py --configs all --shards 6 --gpus 0,1,2,3
+python aggregate_baselines.py          # → configs/means_baselines_1535.csv + LaTeX rows
 ```
 
 ---
@@ -64,7 +64,7 @@ https://huggingface.co/datasets/minghua/PartSLIP/tree/main/models into
 Run directly (or via the supervisor):
 ```bash
 python partslip_geolocalization.py \
-    --val_dataset_log ../../configs/val_dataset_1535.log \
+    --val_dataset_log ../../configs/val_dataset.log \
     --entity_allowlist ../../configs/val_dataset_1535_entities.txt \
     --preset conf --experiment_name GeLoM_PartSLIP_default_1535_shard00
 # Top-PCD variant: --preset topk_pct
@@ -91,7 +91,7 @@ Weights: pulled automatically via `Find3D.from_pretrained("ziqima/find3d-checkpt
 
 ```bash
 python find3d_geolocalization.py \
-    --val_dataset_log ../../configs/val_dataset_1535.log \
+    --val_dataset_log ../../configs/val_dataset.log \
     --entity_allowlist ../../configs/val_dataset_1535_entities.txt \
     --n_points 5000 --preset default --experiment_name GeLoM_Find3D_default_1535_shard00
 # Top-PCD variant: --preset topk
@@ -116,7 +116,7 @@ https://huggingface.co/patchalign3d/patchalign3d-encoder into
 
 ```bash
 python patchalign3d_geolocalization.py \
-    --val_dataset_log ../../configs/val_dataset_1535.log \
+    --val_dataset_log ../../configs/val_dataset.log \
     --entity_allowlist ../../configs/val_dataset_1535_entities.txt \
     --preset default --experiment_name GeLoM_PatchAlign3D_default_1535_shard00
 # Top-PCD variant: --preset topk
@@ -128,7 +128,7 @@ python patchalign3d_geolocalization.py \
 - Each vendored repo keeps its upstream `LICENSE` and `README.md` for full
   attribution and the canonical setup instructions.
 - Run outputs land in `GeLoM_*` dirs inside each `baselines/<name>/`;
-  `aggregate_baselines_1535.py` globs those (merging `_recover` re-runs of heavy
+  `aggregate_baselines.py` globs those (merging `_recover` re-runs of heavy
   meshes) into the final baseline rows of `tab:baselines`.
 - The presets map to the paper's **Default** (paper-faithful) and **Top-PCD**
   (top-confidence point-cloud subset) columns.
