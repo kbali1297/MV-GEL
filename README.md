@@ -9,9 +9,7 @@ ground-truth entity geometry (IoU / Precision / Recall / F1).
 
 This repository contains the **code** (training, inference, utilities, baselines,
 and analysis) and the **per-entity result tables** for the corrected 1535-query
-test set (655 faces + 880 edges across 218 meshes). Large artefacts — model
-weights, rendered views, and CAD meshes — are intentionally **not** committed
-(see [Data & checkpoints](#data--checkpoints)).
+test set (655 faces + 880 edges across 218 meshes).
 
 ---
 
